@@ -1,10 +1,11 @@
-import boto3, psycopg2, uvicorn, os, logging
-from fastapi import FastAPI, UploadFile, Form, File
+import boto3, psycopg2, os, logging
+from fastapi import FastAPI, Form, UploadFile, HTTPException, File
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from uuid import UUID
+from typing import List
 
 # FastAPI App Configuration
 app = FastAPI(debug=True)
@@ -41,6 +42,11 @@ DB_DATABASE = os.getenv("DB_DATABASE")
 
 app = FastAPI()
 
+@app.on_event("startup")
+async def startup_event():
+    while not connect_db():
+            continue
+
 # Database Connection
 def connect_db():
     global connection, cursor
@@ -70,21 +76,24 @@ async def create_listing(
     listing_type: str = Form(...),
     animal_price: float = Form(None),
     description: str = Form(None),
-    images: list[UploadFile] = File(...),
+    images: List[UploadFile] = File(...),
 ):
-    global connection, cursor
-
+    global connection
     try:
-        cursor = connection.cursor()
 
         if listing_type == "SALE" and animal_price is None:
-            raise Exception("Price is required for SALE listings")
-
-        listing_id = insert_listing_data(cursor, owner_email, animal_type, animal_breed, animal_age, listing_type, animal_price, description)
+            return HTTPException(status_code=400, detail="Price is required for SALE listings")
+            
+        listing_id = insert_listing_data(
+            connection.cursor(), owner_email, animal_type, animal_breed,
+            animal_age, listing_type, animal_price, description
+        )
 
         for image in images:
             image_url = upload_image_to_s3(image)
-            insert_image_data(cursor, image.filename, image_url, listing_id)
+            insert_image_data(
+                connection.cursor(), image.filename, image_url, listing_id
+            )
 
         connection.commit()
 
@@ -92,7 +101,8 @@ async def create_listing(
     
     except Exception as e:
         connection.rollback()
-        return JSONResponse(jsonable_encoder({"ERROR": str(e)}))@app.put("/listings/{listing_id}")
+        logger.error(f"Error updating listing: {e}")
+        return HTTPException(status_code=500, detail="Internal Server Error")
 
 @app.put("/listings/{listing_id}")
 async def edit_listing(
@@ -106,121 +116,110 @@ async def edit_listing(
     description: str = Form(None),
     images: list[UploadFile] = File(...),
 ):
-    global connection, cursor
+    global connection
 
     try:
-        cursor = connection.cursor()
+        with connection.cursor() as cursor:
+            if listing_type == "SALE" and animal_price is None:
+                return HTTPException(status_code=400, detail="Price is required for SALE listings")
+            
+            check_listing_query = "SELECT * FROM listings WHERE id = %s"
+            cursor.execute(check_listing_query, (str(listing_id),))
+            existing_listing = cursor.fetchone()
 
-        check_listing_query = "SELECT * FROM listings WHERE id = %s"
-        cursor.execute(check_listing_query, (str(listing_id),))
-        existing_listing = cursor.fetchone()
+            if not existing_listing:
+                return HTTPException(status_code=404, detail="Listing not found")
 
-        if not existing_listing:
-            raise Exception("Listing not found")
+            update_listing(cursor, listing_id, owner_email, animal_type, animal_breed, animal_age, listing_type, animal_price, description)
 
-        update_listing_query = """
-            UPDATE listings
-            SET owner_email = %s, animal_type = %s, animal_breed = %s, 
-            animal_age = %s, listing_type = %s, animal_price = %s, 
-            description = %s
-            WHERE id = %s
-        """
-        cursor.execute(update_listing_query, (owner_email, animal_type, animal_breed, animal_age, listing_type, animal_price, description, str(listing_id)))
+            existing_images_rows = cursor.fetchall()
+            existing_images = set(row[0] for row in existing_images_rows) if existing_images_rows else set()
 
-        get_existing_images_query = "SELECT image_name FROM images WHERE listing_id = %s"
-        cursor.execute(get_existing_images_query, (str(listing_id),))
-        existing_images_rows = cursor.fetchall()
-        existing_images = set(row[0] for row in existing_images_rows) if existing_images_rows else set()
+            new_image_filenames = set(image.filename for image in images)
+            images_to_delete = existing_images - new_image_filenames
+            images_to_insert = new_image_filenames - existing_images
 
-        new_image_filenames = set(image for image in images)
-        images_to_delete = existing_images - new_image_filenames
-        images_to_insert = new_image_filenames - existing_images
-     
-        delete_images_query = "DELETE FROM images WHERE listing_id = %s AND image_name = %s"
-        for image in images_to_delete:
-            cursor.execute(delete_images_query, (str(listing_id), image))
+            delete_images_query = "DELETE FROM images WHERE listing_id = %s AND image_name = %s"
+            for image in images_to_delete:
+                cursor.execute(delete_images_query, (str(listing_id), image))
 
-        for image in images_to_insert:
-            image_url = upload_image_to_s3(image)
-            insert_image_data(cursor, image.filename, image_url, str(listing_id))
+            for image in images_to_insert:
+                image_url = upload_image_to_s3(image)
+                insert_image_data(cursor, image.filename, image_url, str(listing_id))
 
-        connection.commit()
+            connection.commit()
 
-        return {"message": "Listing updated successfully with images"}
+            return {"message": "Listing updated successfully with images"}
     
     except Exception as e:
         connection.rollback()
-        return JSONResponse(jsonable_encoder({"ERROR": str(e)}))
+        logger.error(f"Error updating listing: {e}")
+        return HTTPException(status_code=500, detail="Internal Server Error")
 
 @app.delete("/listings/{listing_id}")
 async def delete_listing(listing_id: UUID):
-    global connection, cursor
+    global connection
 
     try:
-        cursor = connection.cursor()
+        with connection.cursor() as cursor:
+        
+            # Check if the listing with the given ID exists
+            check_listing_query = "SELECT * FROM listings WHERE id = %s"
+            cursor.execute(check_listing_query, (str(listing_id),))
+            existing_listing = cursor.fetchone()
 
-        # Check if the listing with the given ID exists
-        check_listing_query = "SELECT * FROM listings WHERE id = %s"
-        cursor.execute(check_listing_query, (str(listing_id),))
-        existing_listing = cursor.fetchone()
+            if not existing_listing:
+                return HTTPException(status_code=404, detail="Listing not found")
 
-        if not existing_listing:
-            raise Exception("Listing not found")
+            # Delete the listing
+            delete_listing_query = "DELETE FROM listings WHERE id = %s"
+            cursor.execute(delete_listing_query, (str(listing_id),))
 
-        # Delete the listing
-        delete_listing_query = "DELETE FROM listings WHERE id = %s"
-        cursor.execute(delete_listing_query, (str(listing_id),))
+            # Delete associated images
+            delete_images_query = "DELETE FROM images WHERE listing_id = %s"
+            cursor.execute(delete_images_query, (str(listing_id),))
 
-        # Delete associated images
-        delete_images_query = "DELETE FROM images WHERE listing_id = %s"
-        cursor.execute(delete_images_query, (str(listing_id),))
+            connection.commit()
 
-        connection.commit()
-
-        return {"message": "Listing deleted successfully"}
+            return {"message": "Listing deleted successfully"}
     
     except Exception as e:
         connection.rollback()
-        return JSONResponse(jsonable_encoder({"ERROR": str(e)}))
+        logger.error(f"Error deleting listing: {e}")
+        return HTTPException(status_code=500, detail="Internal Server Error")
 
 @app.get("/listings/")
 async def get_all_listings():
-    global connection, cursor
+    global connection
     try:
-        cursor.execute("SELECT * FROM listings")
-        rows = cursor.fetchall()
-        listings = [{"listing_id": row[0], "owner_email": row[1], "animal_type": row[2], "animal_breed": row[3], "animal_age": row[4], "listing_type": row[5], "animal_price": row[6], "description": row[7]} for row in rows]
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT * FROM listings")
+            rows = cursor.fetchall()
+            listings = [{"listing_id": row[0], "owner_email": row[1], "animal_type": row[2], "animal_breed": row[3], "animal_age": row[4], "listing_type": row[5], "animal_price": row[6], "description": row[7]} for row in rows]
 
-        return JSONResponse(jsonable_encoder({"listings": listings}))
+            return {"listings": listings}
     except Exception as e:
-        error_message = f"Error getting listings -> {str(e)}"
-        return {"message": error_message}
+        logger.error(f"Error: {e}")
+        return HTTPException(status_code=500, detail="Internal Server Error")
 
 @app.get("/listings/{user_email}")
 async def get_listings_by_user(user_email: str):
-    global connection, cursor
+    global connection
     try:
-        if user_email is None:
-            raise ValueError("User email is missing")
+        with connection.cursor() as cursor:
+            if user_email is None:
+                return HTTPException(status_code=404, detail="User email is missing")
 
-        query = "SELECT * FROM listings WHERE owner_email = %s"
-        cursor.execute(query, (user_email,))
-        rows = cursor.fetchall()
+            query = "SELECT * FROM listings WHERE owner_email = %s"
+            cursor.execute(query, (user_email,))
+            rows = cursor.fetchall()
 
-        if not rows:
-            return JSONResponse(jsonable_encoder({"message": "No listings found for this user"}))
-
-        user_listings = [{"listing_id": row[0], "owner_email": row[1], "animal_type": row[2], "animal_breed": row[3], "animal_age": row[4], "listing_type": row[5], "animal_price": row[6], "description": row[7]} for row in rows]
-
-        return JSONResponse(jsonable_encoder({"user_listings": user_listings}))
-    
-    except ValueError as e:
-        return JSONResponse(jsonable_encoder({"message": f"Invalid query parameter: {e}"}))
+            return {"user_listings": [{"listing_id": row[0], "owner_email": row[1], "animal_type": row[2], "animal_breed": row[3], "animal_age": row[4], "listing_type": row[5], "animal_price": row[6], "description": row[7]} for row in rows]}
     
     except Exception as e:
-        return JSONResponse(jsonable_encoder({"ERROR": str(e)}))
+        logger.error(f"Error: {e}")
+        return HTTPException(status_code=500, detail="Internal Server Error")
 
-# Function to create tables
 def create_tables():
     try:
         global connection,cursor
@@ -272,7 +271,12 @@ def insert_image_data(cursor, image_filename, image_url, listing_id):
     insert_query = "INSERT INTO images (image_name, image_url, listing_id) VALUES (%s, %s, %s)"
     cursor.execute(insert_query, (image_filename, image_url, listing_id))
 
-if __name__ == "__main__":
-    while not connect_db():
-        continue
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+def update_listing(cursor, listing_id, owner_email, animal_type, animal_breed, animal_age, listing_type, animal_price, description):
+    update_listing_query = """
+        UPDATE listings
+        SET owner_email = %s, animal_type = %s, animal_breed = %s, 
+        animal_age = %s, listing_type = %s, animal_price = %s, 
+        description = %s
+        WHERE id = %s
+    """
+    cursor.execute(update_listing_query, (owner_email, animal_type, animal_breed, animal_age, listing_type, animal_price, description, str(listing_id)))
