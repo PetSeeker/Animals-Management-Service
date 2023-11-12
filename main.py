@@ -1,5 +1,5 @@
 import boto3, psycopg2, os, logging
-from fastapi import FastAPI, Form, UploadFile, HTTPException, File
+from fastapi import FastAPI, Form, UploadFile, HTTPException, File, Query
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -80,24 +80,27 @@ async def create_listing(
 ):
     global connection
     try:
-
-        if listing_type == "SALE" and animal_price is None:
-            return HTTPException(status_code=400, detail="Price is required for SALE listings")
+        with connection.cursor() as cursor:
+            if listing_type not in ['SALE', 'ADOPTION']:
+                return HTTPException(status_code=400, detail="Invalid listing_type. Allowed values are 'SALE' or 'ADOPTION'.")
             
-        listing_id = insert_listing_data(
-            connection.cursor(), owner_email, animal_type, animal_breed,
-            animal_age, listing_type, animal_price, description
-        )
-
-        for image in images:
-            image_url = upload_image_to_s3(image)
-            insert_image_data(
-                connection.cursor(), image.filename, image_url, listing_id
+            if listing_type == "SALE" and animal_price is None:
+                return HTTPException(status_code=400, detail="Price is required for SALE listings")
+                
+            listing_id = insert_listing_data(
+                cursor, owner_email, animal_type, animal_breed,
+                animal_age, listing_type, animal_price, description
             )
 
-        connection.commit()
+            for image in images:
+                image_url = upload_image_to_s3(image)
+                insert_image_data(
+                    cursor, image.filename, image_url, listing_id
+                )
 
-        return {"message": "Listing created successfully with images"}
+            connection.commit()
+
+            return {"message": "Listing created successfully with images"}
     
     except Exception as e:
         connection.rollback()
@@ -120,6 +123,10 @@ async def edit_listing(
 
     try:
         with connection.cursor() as cursor:
+
+            if listing_type not in ['SALE', 'ADOPTION']:
+                return HTTPException(status_code=400, detail="Invalid listing_type. Allowed values are 'SALE' or 'ADOPTION'.")
+        
             if listing_type == "SALE" and animal_price is None:
                 return HTTPException(status_code=400, detail="Price is required for SALE listings")
             
@@ -189,11 +196,15 @@ async def delete_listing(listing_id: UUID):
         return HTTPException(status_code=500, detail="Internal Server Error")
 
 @app.get("/listings/")
-async def get_all_listings():
+async def get_listings_by_type(listing_type: str = Query(None)):
     global connection
     try:
         with connection.cursor() as cursor:
-            cursor.execute("SELECT * FROM listings")
+            if listing_type:
+                cursor.execute("SELECT * FROM listings WHERE listing_type = %s", (listing_type,))
+            else:
+                cursor.execute("SELECT * FROM listings")
+
             rows = cursor.fetchall()
             listings = [{"listing_id": row[0], "owner_email": row[1], "animal_type": row[2], "animal_breed": row[3], "animal_age": row[4], "listing_type": row[5], "animal_price": row[6], "description": row[7]} for row in rows]
 
@@ -203,15 +214,23 @@ async def get_all_listings():
         return HTTPException(status_code=500, detail="Internal Server Error")
 
 @app.get("/listings/{user_email}")
-async def get_listings_by_user(user_email: str):
+async def get_listings_by_user_and_type(
+    user_email: str,
+    listing_type: str = Query(None)
+):
     global connection
     try:
         with connection.cursor() as cursor:
             if user_email is None:
                 return HTTPException(status_code=404, detail="User email is missing")
 
-            query = "SELECT * FROM listings WHERE owner_email = %s"
-            cursor.execute(query, (user_email,))
+            if listing_type:
+                query = "SELECT * FROM listings WHERE owner_email = %s AND listing_type = %s"
+                cursor.execute(query, (user_email, listing_type))
+            else:
+                query = "SELECT * FROM listings WHERE owner_email = %s"
+                cursor.execute(query, (user_email,))
+
             rows = cursor.fetchall()
 
             return {"user_listings": [{"listing_id": row[0], "owner_email": row[1], "animal_type": row[2], "animal_breed": row[3], "animal_age": row[4], "listing_type": row[5], "animal_price": row[6], "description": row[7]} for row in rows]}
@@ -232,7 +251,7 @@ def create_tables():
                 animal_type VARCHAR NOT NULL,
                 animal_breed VARCHAR NOT NULL,
                 animal_age INT NOT NULL,
-                listing_type VARCHAR NOT NULL,
+                listing_type VARCHAR(10) CHECK (listing_type IN ('SALE', 'ADOPTION')) NOT NULL,
                 animal_price DOUBLE PRECISION,
                 description TEXT
             );
