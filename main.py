@@ -1,7 +1,5 @@
 import boto3, psycopg2, os, logging
 from fastapi import FastAPI, Form, UploadFile, HTTPException, File, Query
-from fastapi.encoders import jsonable_encoder
-from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from uuid import UUID
