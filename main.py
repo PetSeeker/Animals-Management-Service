@@ -65,6 +65,11 @@ def connect_db():
         logger.error(f"Error while connecting to PostgreSQL: {error}")
         return False
 
+@app.get("/health")
+async def health():
+    return HTTPException(status_code=200, detail="Server is healthy")
+
+
 @app.post("/listings/")
 async def create_listing(
     owner_email: str = Form(...),
