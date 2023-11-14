@@ -120,7 +120,7 @@ async def edit_listing(
     listing_type: str = Form(...),
     animal_price: float = Form(None),
     description: str = Form(None),
-    images: Optional[List[UploadFile]] = File([])
+    images: Optional[list[UploadFile]] = File([])
 ):
     global connection
 
@@ -173,7 +173,6 @@ async def delete_listing(listing_id: UUID):
     try:
         with connection.cursor() as cursor:
         
-            # Check if the listing with the given ID exists
             check_listing_query = "SELECT * FROM listings WHERE id = %s"
             cursor.execute(check_listing_query, (str(listing_id),))
             existing_listing = cursor.fetchone()
@@ -181,11 +180,9 @@ async def delete_listing(listing_id: UUID):
             if not existing_listing:
                 return HTTPException(status_code=404, detail="Listing not found")
 
-            # Delete the listing
             delete_listing_query = "DELETE FROM listings WHERE id = %s"
             cursor.execute(delete_listing_query, (str(listing_id),))
 
-            # Delete associated images
             delete_images_query = "DELETE FROM images WHERE listing_id = %s"
             cursor.execute(delete_images_query, (str(listing_id),))
 
@@ -209,7 +206,22 @@ async def get_listings_by_type(listing_type: str = Query(None)):
                 cursor.execute("SELECT * FROM listings")
 
             rows = cursor.fetchall()
-            listings = [{"listing_id": row[0], "owner_email": row[1], "animal_type": row[2], "animal_breed": row[3], "animal_age": row[4], "listing_type": row[5], "animal_price": row[6], "description": row[7]} for row in rows]
+            listings = []
+            for row in rows:
+                listing_id = row[0]
+                images = get_images_for_listing(listing_id, cursor)
+                listing = {
+                    "listing_id": listing_id,
+                    "owner_email": row[1],
+                    "animal_type": row[2],
+                    "animal_breed": row[3],
+                    "animal_age": row[4],
+                    "listing_type": row[5],
+                    "animal_price": row[6],
+                    "description": row[7],
+                    "images": images
+                }
+                listings.append(listing)
 
             return {"listings": listings}
     except Exception as e:
@@ -235,12 +247,44 @@ async def get_listings_by_user_and_type(
                 cursor.execute(query, (user_email,))
 
             rows = cursor.fetchall()
+            user_listings = []
+            for row in rows:
+                listing_id = row[0]
+                images = get_images_for_listing(listing_id, cursor)
+                user_listing = {
+                    "listing_id": listing_id,
+                    "owner_email": row[1],
+                    "animal_type": row[2],
+                    "animal_breed": row[3],
+                    "animal_age": row[4],
+                    "listing_type": row[5],
+                    "animal_price": row[6],
+                    "description": row[7],
+                    "images": images
+                }
+                user_listings.append(user_listing)
 
-            return {"user_listings": [{"listing_id": row[0], "owner_email": row[1], "animal_type": row[2], "animal_breed": row[3], "animal_age": row[4], "listing_type": row[5], "animal_price": row[6], "description": row[7]} for row in rows]}
+            return {"user_listings": user_listings}
     
     except Exception as e:
         logger.error(f"Error: {e}")
         return HTTPException(status_code=500, detail="Internal Server Error")
+
+@app.post("/drop_tables/")
+async def drop_tables():
+    result = drop_tables()
+    return HTTPException(detail=result, status_code=200)
+
+def drop_tables():
+    global connection
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("DROP TABLE IF EXISTS images")
+            cursor.execute("DROP TABLE IF EXISTS listings")
+        connection.commit()
+        return {"message": "Tables dropped successfully"}
+    except Exception as e:
+        return HTTPException(status_code=500, detail=f"Error: {e}")
 
 def create_tables():
     try:
@@ -302,3 +346,9 @@ def update_listing(cursor, listing_id, owner_email, animal_type, animal_breed, a
         WHERE id = %s
     """
     cursor.execute(update_listing_query, (owner_email, animal_type, animal_breed, animal_age, listing_type, animal_price, description, str(listing_id)))
+
+def get_images_for_listing(listing_id, cursor):
+    cursor.execute("SELECT image_url FROM images WHERE listing_id = %s", (listing_id,))
+    image_rows = cursor.fetchall()
+    images = [image[0] for image in image_rows]
+    return images
