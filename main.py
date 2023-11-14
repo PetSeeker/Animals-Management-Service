@@ -79,7 +79,7 @@ async def create_listing(
     listing_type: str = Form(...),
     animal_price: float = Form(None),
     description: str = Form(None),
-    images: List[UploadFile] = File(...),
+    images: List[UploadFile] = File(None),
 ):
     global connection
     try:
@@ -120,7 +120,7 @@ async def edit_listing(
     listing_type: str = Form(...),
     animal_price: float = Form(None),
     description: str = Form(None),
-    images: list[UploadFile] = File(...),
+    images: list[UploadFile] = File(None)
 ):
     global connection
 
