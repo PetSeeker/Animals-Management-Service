@@ -1,9 +1,9 @@
 import boto3, psycopg2, os, logging
-from fastapi import FastAPI, Form, UploadFile, HTTPException, File, Query
+from fastapi import FastAPI, Form, UploadFile, HTTPException, File, Query 
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from uuid import UUID
-from typing import List
+from typing import List, Optional
 
 # FastAPI App Configuration
 app = FastAPI(debug=True)
@@ -79,7 +79,7 @@ async def create_listing(
     listing_type: str = Form(...),
     animal_price: float = Form(None),
     description: str = Form(None),
-    images: List[UploadFile] = File(None),
+    images: Optional[List[UploadFile]] = File([])
 ):
     global connection
     try:
@@ -120,7 +120,7 @@ async def edit_listing(
     listing_type: str = Form(...),
     animal_price: float = Form(None),
     description: str = Form(None),
-    images: list[UploadFile] = File(None)
+    images: Optional[List[UploadFile]] = File([])
 ):
     global connection
 
