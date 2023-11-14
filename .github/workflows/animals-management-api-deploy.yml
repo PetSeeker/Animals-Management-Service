@@ -10,7 +10,7 @@ env:
   ECR_REGISTRY_ALIAS: l0z7y8f5
   ECR_REPOSITORY: animal-management-api	
   AWS_REGION: eu-north-1                                             # set this to your preferred AWS region, e.g. us-west-1
-  ECS_SERVICE: test-service                                          # set this to your Amazon ECS service name
+  ECS_SERVICE: animals-man-api-service                               # set this to your Amazon ECS service name
   ECS_CLUSTER: animals-management-cluster                            # set this to your Amazon ECS cluster name
   ECS_TASK_DEFINITION: .aws/animals-management-task-definition.json  # set this to the path to your Amazon ECS task definition                                           # file, e.g. .aws/task-definition.json
   CONTAINER_NAME: fastapi-container                                  # set this to the name of the container in the
@@ -64,10 +64,10 @@ jobs:
         container-name: ${{ env.CONTAINER_NAME }}
         image: ${{ steps.build-image.outputs.image }}
 
-    - name: Deploy Amazon ECS task definition
-      uses: aws-actions/amazon-ecs-deploy-task-definition@v1
-      with:
-        task-definition: ${{ steps.task-def.outputs.task-definition }}
-        service: ${{ env.ECS_SERVICE }}
-        cluster: ${{ env.ECS_CLUSTER }}
-        wait-for-service-stability: false
+    # - name: Deploy Amazon ECS task definition
+    #   uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+    #   with:
+    #     task-definition: ${{ steps.task-def.outputs.task-definition }}
+    #     service: ${{ env.ECS_SERVICE }}
+    #     cluster: ${{ env.ECS_CLUSTER }}
+    #     wait-for-service-stability: false
