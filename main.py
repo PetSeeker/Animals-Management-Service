@@ -3,7 +3,6 @@ from fastapi import FastAPI, Form, UploadFile, HTTPException, File, Query
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from uuid import UUID
-from typing import List, Optional
 
 # FastAPI App Configuration
 app = FastAPI(debug=True)
@@ -79,7 +78,7 @@ async def create_listing(
     listing_type: str = Form(...),
     animal_price: float = Form(None),
     description: str = Form(None),
-    images: Optional[List[UploadFile]] = File([])
+    images: list[UploadFile] = File([])
 ):
     global connection
     try:
@@ -96,6 +95,7 @@ async def create_listing(
             )
 
             for image in images:
+                logger.info(f"Uploading image: {image.filename}")
                 image_url = upload_image_to_s3(image)
                 insert_image_data(
                     cursor, image.filename, image_url, listing_id
@@ -120,7 +120,7 @@ async def edit_listing(
     listing_type: str = Form(...),
     animal_price: float = Form(None),
     description: str = Form(None),
-    images: Optional[list[UploadFile]] = File([])
+    images: list[UploadFile] = File([])
 ):
     global connection
 
