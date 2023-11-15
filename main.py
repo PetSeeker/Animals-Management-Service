@@ -121,7 +121,7 @@ async def edit_listing(
     listing_type: str = Form(...),
     animal_price: float = Form(None),
     description: str = Form(None),
-    images: list[UploadFile] = File([])
+    images: list[UploadFile] = Form([])
 ):
     global connection
 
