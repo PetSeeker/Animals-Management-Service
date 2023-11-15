@@ -75,6 +75,8 @@ async def create_listing(
     animal_type: str = Form(...),
     animal_breed: str = Form(...),
     animal_age: int = Form(...),
+    animal_name: str = Form(...),
+    location: str = Form(...),
     listing_type: str = Form(...),
     animal_price: float = Form(None),
     description: str = Form(None),
@@ -91,16 +93,17 @@ async def create_listing(
                 
             listing_id = insert_listing_data(
                 cursor, owner_email, animal_type, animal_breed,
-                animal_age, listing_type, animal_price, description
+                animal_age, animal_name, location,listing_type, animal_price, description
             )
             logger.info(images)
-
+        
             for image in images:
-                logger.info(f"Uploading image: {image.filename}")
-                image_url = upload_image_to_s3(image)
-                insert_image_data(
-                    cursor, image.filename, image_url, listing_id
-                )
+                if image:
+                    logger.info(f"Uploading image: {image.filename}")
+                    image_url = upload_image_to_s3(image)
+                    insert_image_data(
+                        cursor, image.filename, image_url, listing_id
+                    )
 
             connection.commit()
 
@@ -118,6 +121,8 @@ async def edit_listing(
     animal_type: str = Form(...),
     animal_breed: str = Form(...),
     animal_age: int = Form(...),
+    animal_name: str = Form(...),
+    location: str = Form(...),
     listing_type: str = Form(...),
     animal_price: float = Form(None),
     description: str = Form(None),
@@ -127,6 +132,8 @@ async def edit_listing(
 
     try:
         with connection.cursor() as cursor:
+
+            logger.info(images)
 
             if listing_type not in ['SALE', 'ADOPTION']:
                 return HTTPException(status_code=400, detail="Invalid listing_type. Allowed values are 'SALE' or 'ADOPTION'.")
@@ -141,8 +148,10 @@ async def edit_listing(
             if not existing_listing:
                 return HTTPException(status_code=404, detail="Listing not found")
 
-            update_listing(cursor, listing_id, owner_email, animal_type, animal_breed, animal_age, listing_type, animal_price, description)
+            update_listing(cursor, listing_id, owner_email, animal_type, animal_breed, animal_age, animal_name, location, listing_type, animal_price, description)
 
+            get_existing_images_query = "SELECT image_name FROM images WHERE listing_id = %s"
+            cursor.execute(get_existing_images_query, (str(listing_id),))
             existing_images_rows = cursor.fetchall()
             existing_images = set(row[0] for row in existing_images_rows) if existing_images_rows else set()
 
@@ -151,12 +160,18 @@ async def edit_listing(
             images_to_insert = new_image_filenames - existing_images
 
             delete_images_query = "DELETE FROM images WHERE listing_id = %s AND image_name = %s"
+            logger.info(f"Deleting images for listing_id: {listing_id}")
             for image in images_to_delete:
-                cursor.execute(delete_images_query, (str(listing_id), image))
+                if image:
+                    logger.info(f"Deleting image: {image}")
+                    cursor.execute(delete_images_query, (str(listing_id), image))
 
+            image_filenames = [image.filename for image in images]
             for image in images_to_insert:
-                image_url = upload_image_to_s3(image)
-                insert_image_data(cursor, image.filename, image_url, str(listing_id))
+                if image:
+                    logger.info(f"Inserting image: {image}")
+                    image_url = upload_image_to_s3(images[image_filenames.index(image)])
+                    insert_image_data(cursor, image, image_url, str(listing_id))
 
             connection.commit()
 
@@ -217,9 +232,11 @@ async def get_listings_by_type(listing_type: str = Query(None)):
                     "animal_type": row[2],
                     "animal_breed": row[3],
                     "animal_age": row[4],
-                    "listing_type": row[5],
-                    "animal_price": row[6],
-                    "description": row[7],
+                    "animal_name": row[5],
+                    "location": row[6],
+                    "listing_type": row[7],
+                    "animal_price": row[8],
+                    "description": row[9],
                     "images": images
                 }
                 listings.append(listing)
@@ -258,9 +275,11 @@ async def get_listings_by_user_and_type(
                     "animal_type": row[2],
                     "animal_breed": row[3],
                     "animal_age": row[4],
-                    "listing_type": row[5],
-                    "animal_price": row[6],
-                    "description": row[7],
+                    "animal_name": row[5],
+                    "location": row[6],
+                    "listing_type": row[7],
+                    "animal_price": row[8],
+                    "description": row[9],
                     "images": images
                 }
                 user_listings.append(user_listing)
@@ -299,6 +318,8 @@ def create_tables():
                 animal_type VARCHAR NOT NULL,
                 animal_breed VARCHAR NOT NULL,
                 animal_age INT NOT NULL,
+                animal_name VARCHAR NOT NULL,
+                location VARCHAR NOT NULL,
                 listing_type VARCHAR(10) CHECK (listing_type IN ('SALE', 'ADOPTION')) NOT NULL,
                 animal_price DOUBLE PRECISION,
                 description TEXT
@@ -329,24 +350,24 @@ def upload_image_to_s3(image):
     bucket.upload_fileobj(image.file, image.filename, ExtraArgs={"ACL": "public-read"})
     return image_url
 
-def insert_listing_data(cursor, owner_email, animal_type, animal_breed, animal_age, listing_type, animal_price, description):
-    insert_query = "INSERT INTO listings (owner_email, animal_type, animal_breed, animal_age, listing_type, animal_price, description) VALUES (%s,%s, %s, %s, %s, %s, %s) RETURNING id"
-    cursor.execute(insert_query, (owner_email, animal_type, animal_breed, animal_age, listing_type, animal_price, description))
+def insert_listing_data(cursor, owner_email, animal_type, animal_breed, animal_age, animal_name, location, listing_type, animal_price, description):
+    insert_query = "INSERT INTO listings (owner_email, animal_type, animal_breed, animal_age, animal_name, location, listing_type, animal_price, description) VALUES (%s,%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id"
+    cursor.execute(insert_query, (owner_email, animal_type, animal_breed, animal_age, animal_name, location,listing_type, animal_price, description))
     return cursor.fetchone()[0]
 
 def insert_image_data(cursor, image_filename, image_url, listing_id):
     insert_query = "INSERT INTO images (image_name, image_url, listing_id) VALUES (%s, %s, %s)"
     cursor.execute(insert_query, (image_filename, image_url, listing_id))
 
-def update_listing(cursor, listing_id, owner_email, animal_type, animal_breed, animal_age, listing_type, animal_price, description):
+def update_listing(cursor, listing_id, owner_email, animal_type, animal_breed, animal_age, animal_name, location, listing_type, animal_price, description):
     update_listing_query = """
         UPDATE listings
         SET owner_email = %s, animal_type = %s, animal_breed = %s, 
-        animal_age = %s, listing_type = %s, animal_price = %s, 
+        animal_age = %s, animal_name = %s, location = %s, listing_type = %s, animal_price = %s, 
         description = %s
         WHERE id = %s
     """
-    cursor.execute(update_listing_query, (owner_email, animal_type, animal_breed, animal_age, listing_type, animal_price, description, str(listing_id)))
+    cursor.execute(update_listing_query, (owner_email, animal_type, animal_breed, animal_age, animal_name, location, listing_type, animal_price, description, str(listing_id)))
 
 def get_images_for_listing(listing_id, cursor):
     cursor.execute("SELECT image_url FROM images WHERE listing_id = %s", (listing_id,))
