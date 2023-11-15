@@ -78,7 +78,7 @@ async def create_listing(
     listing_type: str = Form(...),
     animal_price: float = Form(None),
     description: str = Form(None),
-    images: list[UploadFile] = File([])
+    images: list[UploadFile] = Form([])
 ):
     global connection
     try:
@@ -94,7 +94,7 @@ async def create_listing(
                 animal_age, listing_type, animal_price, description
             )
             logger.info(images)
-            
+
             for image in images:
                 logger.info(f"Uploading image: {image.filename}")
                 image_url = upload_image_to_s3(image)
