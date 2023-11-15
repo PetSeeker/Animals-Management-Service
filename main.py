@@ -2,7 +2,7 @@ import boto3, psycopg2, os, logging
 from fastapi import FastAPI, Form, UploadFile, HTTPException, File, Query 
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-from uuid import UUID
+from uuid import UUID, uuid4
 
 # FastAPI App Configuration
 app = FastAPI(debug=True)
@@ -101,9 +101,7 @@ async def create_listing(
                 if image:
                     logger.info(f"Uploading image: {image.filename}")
                     image_url = upload_image_to_s3(image)
-                    insert_image_data(
-                        cursor, image.filename, image_url, listing_id
-                    )
+                    insert_image_data(cursor, image.filename, image_url, listing_id)
 
             connection.commit()
 
@@ -133,8 +131,6 @@ async def edit_listing(
     try:
         with connection.cursor() as cursor:
 
-            logger.info(images)
-
             if listing_type not in ['SALE', 'ADOPTION']:
                 return HTTPException(status_code=400, detail="Invalid listing_type. Allowed values are 'SALE' or 'ADOPTION'.")
         
@@ -150,28 +146,11 @@ async def edit_listing(
 
             update_listing(cursor, listing_id, owner_email, animal_type, animal_breed, animal_age, animal_name, location, listing_type, animal_price, description)
 
-            get_existing_images_query = "SELECT image_name FROM images WHERE listing_id = %s"
-            cursor.execute(get_existing_images_query, (str(listing_id),))
-            existing_images_rows = cursor.fetchall()
-            existing_images = set(row[0] for row in existing_images_rows) if existing_images_rows else set()
-
-            new_image_filenames = set(image.filename for image in images)
-            images_to_delete = existing_images - new_image_filenames
-            images_to_insert = new_image_filenames - existing_images
-
-            delete_images_query = "DELETE FROM images WHERE listing_id = %s AND image_name = %s"
-            logger.info(f"Deleting images for listing_id: {listing_id}")
-            for image in images_to_delete:
-                if image:
-                    logger.info(f"Deleting image: {image}")
-                    cursor.execute(delete_images_query, (str(listing_id), image))
-
-            image_filenames = [image.filename for image in images]
-            for image in images_to_insert:
+            for image in images:
                 if image:
                     logger.info(f"Inserting image: {image}")
-                    image_url = upload_image_to_s3(images[image_filenames.index(image)])
-                    insert_image_data(cursor, image, image_url, str(listing_id))
+                    image_url = upload_image_to_s3(image)
+                    insert_image_data(cursor, image.filename, image_url, str(listing_id))
 
             connection.commit()
 
@@ -290,22 +269,6 @@ async def get_listings_by_user_and_type(
         logger.error(f"Error: {e}")
         return HTTPException(status_code=500, detail="Internal Server Error")
 
-@app.post("/drop_tables/")
-async def drop_tables():
-    result = drop_tables()
-    return HTTPException(detail=result, status_code=200)
-
-def drop_tables():
-    global connection
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute("DROP TABLE IF EXISTS images")
-            cursor.execute("DROP TABLE IF EXISTS listings")
-        connection.commit()
-        return {"message": "Tables dropped successfully"}
-    except Exception as e:
-        return HTTPException(status_code=500, detail=f"Error: {e}")
-
 def create_tables():
     try:
         global connection,cursor
@@ -346,8 +309,10 @@ def create_tables():
         logger.error(f"Error creating tables: {error}")
 
 def upload_image_to_s3(image):
-    image_url = f"https://{AWS_BUCKET}.s3.amazonaws.com/{image.filename}"
-    bucket.upload_fileobj(image.file, image.filename, ExtraArgs={"ACL": "public-read"})
+    random_string = str(uuid4())
+    unique_filename = f"{random_string}_{image.filename}"
+    image_url = f"https://{AWS_BUCKET}.s3.amazonaws.com/{unique_filename}"
+    bucket.upload_fileobj(image.file, unique_filename, ExtraArgs={"ACL": "public-read"})
     return image_url
 
 def insert_listing_data(cursor, owner_email, animal_type, animal_breed, animal_age, animal_name, location, listing_type, animal_price, description):
