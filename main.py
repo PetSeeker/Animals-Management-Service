@@ -225,7 +225,7 @@ async def get_listings_by_type(listing_type: str = Query(None)):
         logger.error(f"Error: {e}")
         return HTTPException(status_code=500, detail="Internal Server Error")
 
-@app.get("/listings/{user_email}")
+@app.get("/listings/user/{user_email}")
 async def get_listings_by_user_and_type(
     user_email: str,
     listing_type: str = Query(None)
@@ -269,7 +269,7 @@ async def get_listings_by_user_and_type(
         logger.error(f"Error: {e}")
         return HTTPException(status_code=500, detail="Internal Server Error")
 
-@app.get("/listings/{listing_id}")
+@app.get("/listings/id/{listing_id}")
 async def get_listing_by_id(listing_id: UUID):
     global connection
     try:
