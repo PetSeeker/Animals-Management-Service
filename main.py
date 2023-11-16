@@ -269,6 +269,36 @@ async def get_listings_by_user_and_type(
         logger.error(f"Error: {e}")
         return HTTPException(status_code=500, detail="Internal Server Error")
 
+@app.get("/listings/{listing_id}")
+async def get_listing_by_id(listing_id: UUID):
+    global connection
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT * FROM listings WHERE id = %s", (str(listing_id),))
+            row = cursor.fetchone()
+            if row:
+                listing_id = row[0]
+                images = get_images_for_listing(listing_id, cursor)
+                listing = {
+                    "listing_id": listing_id,
+                    "owner_email": row[1],
+                    "animal_type": row[2],
+                    "animal_breed": row[3],
+                    "animal_age": row[4],
+                    "animal_name": row[5],
+                    "location": row[6],
+                    "listing_type": row[7],
+                    "animal_price": row[8],
+                    "description": row[9],
+                    "images": images
+                }
+                return {"listing": listing}
+            else:
+                return HTTPException(status_code=404, detail="Listing not found")
+    except Exception as e:
+        logger.error(f"Error: {e}")
+        return HTTPException(status_code=500, detail="Internal Server Error")
+
 def create_tables():
     try:
         global connection,cursor
