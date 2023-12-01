@@ -96,9 +96,9 @@ async def create_listing(
                 animal_age, animal_name, location,listing_type, animal_price, description
             )
             for image in images:
-                logger.info("Image File -> {image.file}")
-                logger.info("Image filename -> {image.filename}")
-                logger.info("Image Type -> {image.content_type}")
+                logger.info(f"Image File -> {image.file}")
+                logger.info(f"Image filename -> {image.filename}")
+                logger.info(f"Image Type -> {image.content_type}")
                 if image:
                     image_url = upload_image_to_s3(image)
                     insert_image_data(cursor, image.filename, image_url, listing_id)
@@ -148,7 +148,9 @@ async def edit_listing(
 
             for image in images:
                 if image:
-                    logger.info(f"Inserting image: {image}")
+                    logger.info(f"Image File -> {image.file}")
+                    logger.info(f"Image filename -> {image.filename}")
+                    logger.info(f"Image Type -> {image.content_type}")
                     image_url = upload_image_to_s3(image)
                     insert_image_data(cursor, image.filename, image_url, str(listing_id))
 
