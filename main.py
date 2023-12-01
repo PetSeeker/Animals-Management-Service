@@ -95,12 +95,11 @@ async def create_listing(
                 cursor, owner_email, animal_type, animal_breed,
                 animal_age, animal_name, location,listing_type, animal_price, description
             )
-            logger.info(images)
-
             for image in images:
-                logger.info(image.filename, image.content_type, image.file)
+                logger.info("Image File -> {image.file}")
+                logger.info("Image filename -> {image.filename}")
+                logger.info("Image Type -> {image.content_type}")
                 if image:
-                    logger.info(f"Uploading image: {image.filename}")
                     image_url = upload_image_to_s3(image)
                     insert_image_data(cursor, image.filename, image_url, listing_id)
 
