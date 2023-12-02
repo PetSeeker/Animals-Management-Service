@@ -3,6 +3,7 @@ from fastapi import FastAPI, Form, UploadFile, HTTPException, File, Query
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from uuid import UUID, uuid4
+from io import BytesIO
 
 # FastAPI App Configuration
 app = FastAPI(debug=True)
@@ -344,7 +345,10 @@ def upload_image_to_s3(image):
     random_string = str(uuid4())
     unique_filename = f"{random_string}_{image.filename}"
     image_url = f"https://{AWS_BUCKET}.s3.amazonaws.com/{unique_filename}"
-    bucket.upload_fileobj(image.file, unique_filename, ExtraArgs={"ACL": "public-read"})
+
+    image_data = BytesIO(image.file.read())
+    bucket.upload_fileobj(image_data, unique_filename, ExtraArgs={"ACL": "public-read", "ContentType": image.content_type})
+
     return image_url
 
 def insert_listing_data(cursor, owner_email, animal_type, animal_breed, animal_age, animal_name, location, listing_type, animal_price, description):
