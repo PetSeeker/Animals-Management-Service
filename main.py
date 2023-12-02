@@ -29,8 +29,8 @@ ACCESS_KEY = os.getenv("ACCESS_KEY")
 SECRET_KEY = os.getenv("SECRET_KEY")
 REGION = os.getenv("REGION")
 
-s3 = boto3.resource('s3', aws_access_key_id=ACCESS_KEY, aws_secret_access_key=SECRET_KEY, region_name=REGION)
-bucket = s3.Bucket(AWS_BUCKET)
+s3 = boto3.client('s3', aws_access_key_id=ACCESS_KEY, aws_secret_access_key=SECRET_KEY, region_name=REGION)
+#bucket = s3.Bucket(AWS_BUCKET)
 
 DB_USER = os.getenv("DB_USER")
 DB_PASSWORD = os.getenv("DB_PASSWORD")
@@ -97,10 +97,10 @@ async def create_listing(
                 animal_age, animal_name, location,listing_type, animal_price, description
             )
             for image in images:
-                logger.info(f"Image File -> {image.file}")
-                logger.info(f"Image filename -> {image.filename}")
-                logger.info(f"Image Type -> {image.content_type}")
                 if image:
+                    logger.info(f"Image File -> {image.file}")
+                    logger.info(f"Image filename -> {image.filename}")
+                    logger.info(f"Image Type -> {image.content_type}")
                     image_url = upload_image_to_s3(image)
                     insert_image_data(cursor, image.filename, image_url, listing_id)
 
@@ -342,14 +342,18 @@ def create_tables():
         logger.error(f"Error creating tables: {error}")
 
 def upload_image_to_s3(image):
-    random_string = str(uuid4())
-    unique_filename = f"{random_string}_{image.filename}"
-    image_url = f"https://{AWS_BUCKET}.s3.amazonaws.com/{unique_filename}"
+        try:
+            random_string = str(uuid4())
+            unique_filename = f"{random_string}_{image.filename}"
+            image_url = f"https://{AWS_BUCKET}.s3.{REGION}.amazonaws.com/{unique_filename}"
 
-    image_data = BytesIO(image.file.read())
-    bucket.upload_fileobj(image_data, unique_filename, ExtraArgs={"ACL": "public-read", "ContentType": image.content_type})
-
-    return image_url
+            image_data = BytesIO(image.file.read())
+            #bucket.upload_fileobj(image_data, unique_filename, ExtraArgs={"ACL": "public-read", "ContentType": image.content_type})
+            s3.upload_fileobj(image_data, AWS_BUCKET, unique_filename, ExtraArgs={"ACL": "public-read", "ContentType": image.content_type})
+            return image_url
+        finally:
+            # Close the BytesIO object to avoid resource leaks
+            image_data.close()
 
 def insert_listing_data(cursor, owner_email, animal_type, animal_breed, animal_age, animal_name, location, listing_type, animal_price, description):
     insert_query = "INSERT INTO listings (owner_email, animal_type, animal_breed, animal_age, animal_name, location, listing_type, animal_price, description) VALUES (%s,%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id"
