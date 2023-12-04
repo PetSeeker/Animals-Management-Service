@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from uuid import UUID, uuid4
 from io import BytesIO
+from typing import List
 
 # FastAPI App Configuration
 app = FastAPI(debug=True)
@@ -201,14 +202,16 @@ async def delete_listing(listing_id: UUID):
         return HTTPException(status_code=500, detail="Internal Server Error")
 
 @app.get("/listings/")
-async def get_listings_by_filter(listing_type: str = Query(None), animal_type: str = Query(None), user_emails: list[str] = Query(None)):
+async def get_listings_by_filter(listing_type: str = Query(None), animal_type: str = Query(None), user_emails: str = Query(None)):
     global connection
     try:
         with connection.cursor() as cursor:
+
+            user_emails_list = user_emails.split(",") if user_emails else []
             listings = []
-            logger.info(f"User emails: {user_emails}")
-            if user_emails:
-                for user_email in user_emails:
+            logger.info(f"User emails: {user_emails_list}")
+            if user_emails_list:
+                for user_email in user_emails_list:
                     query = "SELECT * FROM listings WHERE owner_email = %s"
                     params = (user_email,)
 
