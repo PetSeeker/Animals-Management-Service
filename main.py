@@ -86,6 +86,10 @@ async def create_listing(
     global connection
     try:
         with connection.cursor() as cursor:
+
+            if animal_price < 0 or animal_age < 0:
+                return HTTPException(status_code=400, detail="Price and age must be greater than 0")
+             
             if listing_type not in ['SALE', 'ADOPTION']:
                 return HTTPException(status_code=400, detail="Invalid listing_type. Allowed values are 'SALE' or 'ADOPTION'.")
             
@@ -131,6 +135,9 @@ async def edit_listing(
 
     try:
         with connection.cursor() as cursor:
+            
+            if animal_price < 0 or animal_age < 0:
+                return HTTPException(status_code=400, detail="Price and age must be greater than 0")
 
             if listing_type not in ['SALE', 'ADOPTION']:
                 return HTTPException(status_code=400, detail="Invalid listing_type. Allowed values are 'SALE' or 'ADOPTION'.")
@@ -194,39 +201,55 @@ async def delete_listing(listing_id: UUID):
         return HTTPException(status_code=500, detail="Internal Server Error")
 
 @app.get("/listings/")
-async def get_listings_by_type(listing_type: str = Query(None)):
+async def get_listings_by_filter(listing_type: str = Query(None), animal_type: str = Query(None), user_emails: list[str] = Query(None)):
     global connection
     try:
         with connection.cursor() as cursor:
-            if listing_type:
-                cursor.execute("SELECT * FROM listings WHERE listing_type = %s", (listing_type,))
-            else:
-                cursor.execute("SELECT * FROM listings")
-
-            rows = cursor.fetchall()
             listings = []
-            for row in rows:
-                listing_id = row[0]
-                images = get_images_for_listing(listing_id, cursor)
-                listing = {
-                    "listing_id": listing_id,
-                    "owner_email": row[1],
-                    "animal_type": row[2],
-                    "animal_breed": row[3],
-                    "animal_age": row[4],
-                    "animal_name": row[5],
-                    "location": row[6],
-                    "listing_type": row[7],
-                    "animal_price": row[8],
-                    "description": row[9],
-                    "images": images
-                }
-                listings.append(listing)
+            logger.info(f"User emails: {user_emails}")
+            if user_emails:
+                for user_email in user_emails:
+                    query = "SELECT * FROM listings WHERE owner_email = %s"
+                    params = (user_email,)
 
-            return {"listings": listings}
+                    if listing_type:
+                        query += " AND listing_type = %s"
+                        params += (listing_type,)
+
+                        if animal_type is not None:
+                            query += " AND animal_type = %s"
+                            params += (animal_type,)
+
+                    cursor.execute(query, params)
+                    rows = cursor.fetchall()
+
+                    for row in rows:
+                        listings.append(process_row(row, cursor))
+            else:
+                query = "SELECT * FROM listings"
+
+                if listing_type:
+                    query += " WHERE listing_type = %s"
+                    params = (listing_type,)
+
+                    if animal_type is not None:
+                        query += " AND animal_type = %s"
+                        params += (animal_type,)
+
+                    cursor.execute(query, params)
+                else:
+                    cursor.execute(query)
+
+                rows = cursor.fetchall()
+
+                for row in rows:
+                    listings.append(process_row(row, cursor))
+
+        return {"listings": listings}
     except Exception as e:
         logger.error(f"Error: {e}")
-        return HTTPException(status_code=500, detail="Internal Server Error")
+        raise HTTPException(status_code=500, detail="Internal Server Error")
+
 
 @app.get("/listings/user/{user_email}")
 async def get_listings_by_user_and_type(
@@ -249,23 +272,8 @@ async def get_listings_by_user_and_type(
             rows = cursor.fetchall()
             user_listings = []
             for row in rows:
-                listing_id = row[0]
-                images = get_images_for_listing(listing_id, cursor)
-                user_listing = {
-                    "listing_id": listing_id,
-                    "owner_email": row[1],
-                    "animal_type": row[2],
-                    "animal_breed": row[3],
-                    "animal_age": row[4],
-                    "animal_name": row[5],
-                    "location": row[6],
-                    "listing_type": row[7],
-                    "animal_price": row[8],
-                    "description": row[9],
-                    "images": images
-                }
-                user_listings.append(user_listing)
-
+                user_listings.append(process_row(row, cursor))
+        
             return {"user_listings": user_listings}
     
     except Exception as e:
@@ -379,3 +387,23 @@ def get_images_for_listing(listing_id, cursor):
     image_rows = cursor.fetchall()
     images = [image[0] for image in image_rows]
     return images
+
+def process_row(row, cursor):
+    listing_id, owner_email, animal_type, animal_breed, animal_age, \
+        animal_name, location, listing_type, animal_price, description = row
+
+    images = get_images_for_listing(listing_id, cursor)
+    listing = {
+        "listing_id": listing_id,
+        "owner_email": owner_email,
+        "animal_type": animal_type,
+        "animal_breed": animal_breed,
+        "animal_age": animal_age,
+        "animal_name": animal_name,
+        "location": location,
+        "listing_type": listing_type,
+        "animal_price": animal_price,
+        "description": description,
+        "images": images
+    }
+    return listing
