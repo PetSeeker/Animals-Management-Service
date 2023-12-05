@@ -88,7 +88,7 @@ async def create_listing(
     try:
         with connection.cursor() as cursor:
 
-            if animal_price < 0 or animal_age < 0:
+            if animal_age <= 0 or (animal_price is not None and animal_price <= 0):
                 return HTTPException(status_code=400, detail="Price and age must be greater than 0")
              
             if listing_type not in ['SALE', 'ADOPTION']:
@@ -96,7 +96,10 @@ async def create_listing(
             
             if listing_type == "SALE" and animal_price is None:
                 return HTTPException(status_code=400, detail="Price is required for SALE listings")
-                
+            
+            if listing_type == "ADOPTION" and animal_price is not None:
+                return HTTPException(status_code=400, detail="Price is not required for ADOPTION listings")
+            
             listing_id = insert_listing_data(
                 cursor, owner_email, animal_type, animal_breed,
                 animal_age, animal_name, location,listing_type, animal_price, description
@@ -137,14 +140,17 @@ async def edit_listing(
     try:
         with connection.cursor() as cursor:
             
-            if animal_price < 0 or animal_age < 0:
+            if animal_age <= 0 or (animal_price is not None and animal_price <= 0):
                 return HTTPException(status_code=400, detail="Price and age must be greater than 0")
-
+                
             if listing_type not in ['SALE', 'ADOPTION']:
                 return HTTPException(status_code=400, detail="Invalid listing_type. Allowed values are 'SALE' or 'ADOPTION'.")
         
             if listing_type == "SALE" and animal_price is None:
                 return HTTPException(status_code=400, detail="Price is required for SALE listings")
+            
+            if listing_type == "ADOPTION" and animal_price is not None:
+                return HTTPException(status_code=400, detail="Price is not required for ADOPTION listings")
             
             check_listing_query = "SELECT * FROM listings WHERE id = %s"
             cursor.execute(check_listing_query, (str(listing_id),))
