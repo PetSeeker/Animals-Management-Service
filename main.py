@@ -235,18 +235,15 @@ async def delete_listing(listing_id: UUID):
 
 @app.get("/listings/")
 async def get_listings_by_filter(
+    listing_status: str = Query(...),
     listing_type: str = Query(None), 
     animal_type: str = Query(None), 
-    user_emails: str = Query(None), 
-    listing_status: str = Query(...)):
+    user_emails: str = Query(None)):
 
     global connection
     try:
         with connection.cursor() as cursor:
             
-            if listing_status not in ['ACCEPTED', 'PENDING']:
-                return HTTPException(status_code=400, detail="Invalid listing_status. Allowed values are 'ACCEPTED' or 'PENDING'.")
-
             user_emails_list = user_emails.split(",") if user_emails else []
             listings = []
         
@@ -255,7 +252,7 @@ async def get_listings_by_filter(
                     query = """ SELECT id, owner_email, animal_type, animal_breed, animal_age, animal_name, 
                                 location, listing_type, animal_price, description
                                     FROM listings 
-                                        WHERE owner_email = %s AND listing_status = %s;
+                                        WHERE owner_email = %s AND listing_status = %s
                             """
                     params = (user_email,listing_status,)
 
@@ -280,8 +277,8 @@ async def get_listings_by_filter(
                 params = (listing_status,)
 
                 if listing_type:
-                    query += " WHERE listing_type = %s"
-                    params = (listing_type,)
+                    query += " AND listing_type = %s"
+                    params += (listing_type,)
 
                     if animal_type is not None:
                         query += " AND animal_type = %s"
@@ -300,8 +297,9 @@ async def get_listings_by_filter(
 
 
 @app.get("/listings/user/{user_email}")
-async def get_listings_by_user_and_type(
+async def get_user_listings(
     user_email: str,
+    listing_status: str = Query(...),
     listing_type: str = Query(None)
 ):
     global connection
@@ -309,13 +307,19 @@ async def get_listings_by_user_and_type(
         with connection.cursor() as cursor:
             if user_email is None:
                 return HTTPException(status_code=404, detail="User email is missing")
+            
+            query = """ SELECT id, owner_email, animal_type, animal_breed, animal_age, animal_name, 
+                                location, listing_type, animal_price, description
+                                    FROM listings 
+                                        WHERE owner_email = %s AND listing_status = %s
+                            """
+            params = (user_email,listing_status,)
 
             if listing_type:
-                query = "SELECT * FROM listings WHERE owner_email = %s AND listing_type = %s"
-                cursor.execute(query, (user_email, listing_type))
-            else:
-                query = "SELECT * FROM listings WHERE owner_email = %s"
-                cursor.execute(query, (user_email,))
+                query += " AND listing_type = %s"
+                params += (listing_type,)
+
+            cursor.execute(query, params)
 
             rows = cursor.fetchall()
             user_listings = []
