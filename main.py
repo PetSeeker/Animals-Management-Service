@@ -106,9 +106,6 @@ async def create_listing(
             )
             for image in images:
                 if image:
-                    logger.info(f"Image File -> {image.file}")
-                    logger.info(f"Image filename -> {image.filename}")
-                    logger.info(f"Image Type -> {image.content_type}")
                     image_url = upload_image_to_s3(image)
                     insert_image_data(cursor, image.filename, image_url, listing_id)
 
@@ -133,7 +130,7 @@ async def edit_listing(
     listing_type: str = Form(...),
     animal_price: float = Form(None),
     description: str = Form(None),
-    images: list[UploadFile] = Form([])
+    images: list[UploadFile] = Form([]),
 ):
     global connection
 
@@ -163,9 +160,6 @@ async def edit_listing(
 
             for image in images:
                 if image:
-                    logger.info(f"Image File -> {image.file}")
-                    logger.info(f"Image filename -> {image.filename}")
-                    logger.info(f"Image Type -> {image.content_type}")
                     image_url = upload_image_to_s3(image)
                     insert_image_data(cursor, image.filename, image_url, str(listing_id))
 
@@ -176,6 +170,38 @@ async def edit_listing(
     except Exception as e:
         connection.rollback()
         logger.error(f"Error updating listing: {e}")
+        return HTTPException(status_code=500, detail="Internal Server Error")
+
+@app.put("/listings/{listing_id}/status")
+async def update_listing_status(
+    listing_id: UUID,
+    listing_status: str = Form(...)
+):
+    global connection
+
+    try:
+        with connection.cursor() as cursor:
+
+            if listing_status != "ACCEPTED":
+                return HTTPException(status_code=400, detail="Invalid listing_status. Allowed values are 'ACCEPTED'")
+            
+            check_listing_query = "SELECT * FROM listings WHERE id = %s"
+            cursor.execute(check_listing_query, (str(listing_id),))
+            existing_listing = cursor.fetchone()
+
+            if not existing_listing:
+                return HTTPException(status_code=404, detail="Listing not found")
+
+            update_listing_status_query = "UPDATE listings SET listing_status = %s WHERE id = %s"
+            cursor.execute(update_listing_status_query, (listing_status, str(listing_id)))
+
+            connection.commit()
+
+            return {"message": "Listing status updated successfully"}
+    
+    except Exception as e:
+        connection.rollback()
+        logger.error(f"Error updating listing status: {e}")
         return HTTPException(status_code=500, detail="Internal Server Error")
 
 @app.delete("/listings/{listing_id}")
@@ -208,18 +234,30 @@ async def delete_listing(listing_id: UUID):
         return HTTPException(status_code=500, detail="Internal Server Error")
 
 @app.get("/listings/")
-async def get_listings_by_filter(listing_type: str = Query(None), animal_type: str = Query(None), user_emails: str = Query(None)):
+async def get_listings_by_filter(
+    listing_type: str = Query(None), 
+    animal_type: str = Query(None), 
+    user_emails: str = Query(None), 
+    listing_status: str = Query(...)):
+
     global connection
     try:
         with connection.cursor() as cursor:
+            
+            if listing_status not in ['ACCEPTED', 'PENDING']:
+                return HTTPException(status_code=400, detail="Invalid listing_status. Allowed values are 'ACCEPTED' or 'PENDING'.")
 
             user_emails_list = user_emails.split(",") if user_emails else []
             listings = []
-            logger.info(f"User emails: {user_emails_list}")
+        
             if user_emails_list:
                 for user_email in user_emails_list:
-                    query = "SELECT * FROM listings WHERE owner_email = %s"
-                    params = (user_email,)
+                    query = """ SELECT id, owner_email, animal_type, animal_breed, animal_age, animal_name, 
+                                location, listing_type, animal_price, description
+                                    FROM listings 
+                                        WHERE owner_email = %s AND listing_status = %s;
+                            """
+                    params = (user_email,listing_status,)
 
                     if listing_type:
                         query += " AND listing_type = %s"
@@ -235,7 +273,11 @@ async def get_listings_by_filter(listing_type: str = Query(None), animal_type: s
                     for row in rows:
                         listings.append(process_row(row, cursor))
             else:
-                query = "SELECT * FROM listings"
+                query = """ SELECT id, owner_email, animal_type, animal_breed, animal_age, animal_name, 
+                            location, listing_type, animal_price, description 
+                                FROM listings WHERE listing_status = %s
+                        """
+                params = (listing_status,)
 
                 if listing_type:
                     query += " WHERE listing_type = %s"
@@ -245,10 +287,7 @@ async def get_listings_by_filter(listing_type: str = Query(None), animal_type: s
                         query += " AND animal_type = %s"
                         params += (animal_type,)
 
-                    cursor.execute(query, params)
-                else:
-                    cursor.execute(query)
-
+                cursor.execute(query, params)
                 rows = cursor.fetchall()
 
                 for row in rows:
@@ -323,6 +362,11 @@ def create_tables():
     try:
         global connection,cursor
 
+        delete_listings_table = "DROP TABLE IF EXISTS listings CASCADE;"
+        cursor.execute(delete_listings_table)
+        delete_images_table = "DROP TABLE IF EXISTS images CASCADE;"
+        cursor.execute(delete_images_table)
+
         # Create the 'listings' 
         create_listings_table = """
             CREATE TABLE IF NOT EXISTS listings (
@@ -335,6 +379,7 @@ def create_tables():
                 location VARCHAR NOT NULL,
                 listing_type VARCHAR(10) CHECK (listing_type IN ('SALE', 'ADOPTION')) NOT NULL,
                 animal_price DOUBLE PRECISION,
+                listing_status VARCHAR(10) CHECK (listing_status IN ('ACCEPTED', 'PENDING')) NOT NULL,
                 description TEXT
             );
         """
@@ -365,16 +410,15 @@ def upload_image_to_s3(image):
             image_url = f"https://{AWS_BUCKET}.s3.{REGION}.amazonaws.com/{unique_filename}"
 
             image_data = BytesIO(image.file.read())
-            #bucket.upload_fileobj(image_data, unique_filename, ExtraArgs={"ACL": "public-read", "ContentType": image.content_type})
             s3.upload_fileobj(image_data, AWS_BUCKET, unique_filename, ExtraArgs={"ACL": "public-read", "ContentType": image.content_type})
             return image_url
         finally:
-            # Close the BytesIO object to avoid resource leaks
             image_data.close()
 
 def insert_listing_data(cursor, owner_email, animal_type, animal_breed, animal_age, animal_name, location, listing_type, animal_price, description):
-    insert_query = "INSERT INTO listings (owner_email, animal_type, animal_breed, animal_age, animal_name, location, listing_type, animal_price, description) VALUES (%s,%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id"
-    cursor.execute(insert_query, (owner_email, animal_type, animal_breed, animal_age, animal_name, location,listing_type, animal_price, description))
+    listing_status = "PENDING"
+    insert_query = "INSERT INTO listings (owner_email, animal_type, animal_breed, animal_age, animal_name, location, listing_type, animal_price, listing_status, description) VALUES (%s,%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id"
+    cursor.execute(insert_query, (owner_email, animal_type, animal_breed, animal_age, animal_name, location, listing_type, animal_price, listing_status, description))
     return cursor.fetchone()[0]
 
 def insert_image_data(cursor, image_filename, image_url, listing_id):
@@ -382,14 +426,15 @@ def insert_image_data(cursor, image_filename, image_url, listing_id):
     cursor.execute(insert_query, (image_filename, image_url, listing_id))
 
 def update_listing(cursor, listing_id, owner_email, animal_type, animal_breed, animal_age, animal_name, location, listing_type, animal_price, description):
+    listing_status = "PENDING"
     update_listing_query = """
         UPDATE listings
         SET owner_email = %s, animal_type = %s, animal_breed = %s, 
         animal_age = %s, animal_name = %s, location = %s, listing_type = %s, animal_price = %s, 
-        description = %s
+        listing_status = %s, description = %s
         WHERE id = %s
     """
-    cursor.execute(update_listing_query, (owner_email, animal_type, animal_breed, animal_age, animal_name, location, listing_type, animal_price, description, str(listing_id)))
+    cursor.execute(update_listing_query, (owner_email, animal_type, animal_breed, animal_age, animal_name, location, listing_type, animal_price, listing_status, description, str(listing_id)))
 
 def get_images_for_listing(listing_id, cursor):
     cursor.execute("SELECT image_url FROM images WHERE listing_id = %s", (listing_id,))
