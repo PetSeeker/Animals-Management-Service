@@ -362,11 +362,6 @@ def create_tables():
     try:
         global connection,cursor
 
-        delete_listings_table = "DROP TABLE IF EXISTS listings CASCADE;"
-        cursor.execute(delete_listings_table)
-        delete_images_table = "DROP TABLE IF EXISTS images CASCADE;"
-        cursor.execute(delete_images_table)
-
         # Create the 'listings' 
         create_listings_table = """
             CREATE TABLE IF NOT EXISTS listings (
