@@ -337,7 +337,10 @@ async def get_listing_by_id(listing_id: UUID):
     global connection
     try:
         with connection.cursor() as cursor:
-            cursor.execute("SELECT * FROM listings WHERE id = %s", (str(listing_id),))
+            query = """ SELECT id, owner_email, animal_type, animal_breed, animal_age, animal_name, 
+                                location, listing_type, animal_price, description FROM listings WHERE id = %s
+            """
+            cursor.execute(query, (str(listing_id),))
             row = cursor.fetchone()
             if row:
                 listing_id = row[0]
