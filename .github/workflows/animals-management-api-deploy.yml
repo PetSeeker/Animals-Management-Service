@@ -5,8 +5,8 @@ on:
     branches:
       - main
     paths:
-      - 'animals-management-api/main.py'
-      - 'animals-management-api/test_main.py'
+      - 'main.py'
+      - 'test_main.py'
 
 env:
   ECR_REGISTRY_ALIAS: l6y6f3c9
