@@ -133,12 +133,7 @@ async def edit_listing(
 
     try:
         with connection.cursor() as cursor:
-            
-            print(images)
-            
-            if listing_id is None:
-                return HTTPException(status_code=404, detail="Listing ID is missing")
-            
+                        
             if animal_age <= 0 or (animal_price is not None and animal_price <= 0):
                 return HTTPException(status_code=400, detail="Price and age must be greater than 0")
                 

@@ -1,7 +1,6 @@
-import pytest, os
+import pytest
 from uuid import uuid4
 from fastapi.testclient import TestClient
-from fastapi import UploadFile
 from unittest.mock import patch, MagicMock
 from main import app, connect_db
 
