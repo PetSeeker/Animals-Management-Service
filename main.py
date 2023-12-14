@@ -1,10 +1,9 @@
 import boto3, psycopg2, os, logging
-from fastapi import FastAPI, Form, UploadFile, HTTPException, File, Query 
+from fastapi import FastAPI, Form, UploadFile, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from uuid import UUID, uuid4
 from io import BytesIO
-from typing import List
 
 # FastAPI App Configuration
 app = FastAPI(debug=True)
@@ -23,7 +22,6 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 connection = None
-cursor = None
 
 AWS_BUCKET = os.getenv("BUCKET")
 ACCESS_KEY = os.getenv("ACCESS_KEY")
@@ -31,7 +29,6 @@ SECRET_KEY = os.getenv("SECRET_KEY")
 REGION = os.getenv("REGION")
 
 s3 = boto3.client('s3', aws_access_key_id=ACCESS_KEY, aws_secret_access_key=SECRET_KEY, region_name=REGION)
-#bucket = s3.Bucket(AWS_BUCKET)
 
 DB_USER = os.getenv("DB_USER")
 DB_PASSWORD = os.getenv("DB_PASSWORD")
@@ -41,35 +38,35 @@ DB_DATABASE = os.getenv("DB_DATABASE")
 
 app = FastAPI()
 
-@app.on_event("startup")
-async def startup_event():
-    while not connect_db():
-            continue
-
 # Database Connection
 def connect_db():
-    global connection, cursor
+    global connection
     try:
         connection = psycopg2.connect(user=DB_USER, password=DB_PASSWORD, host=DB_HOST, port=DB_PORT, database=DB_DATABASE)
 
-        cursor = connection.cursor()
-        if connection:
+        # Create a cursor within the context manager
+        with connection.cursor() as cursor:
             cursor.execute("SELECT version();")
             db_version = cursor.fetchone()
-            logger.info(f"Connected to {db_version[0]}")
-            create_tables()
-            return True
-        else:
-            logger.error("Failed to connect to the database.")
-            return False
+
+        logger.info(f"Connected to {db_version[0]}")
+        create_tables()
+        return True
+
     except (Exception, psycopg2.Error) as error:
         logger.error(f"Error while connecting to PostgreSQL: {error}")
         return False
 
+def startup_event():
+    while not connect_db():
+            continue
+    
+app.add_event_handler("startup", startup_event)
+
+
 @app.get("/health/")
 async def health():
-    return HTTPException(status_code=200, detail="Server is healthy")
-
+    return {"status": "Server is healthy"}
 
 @app.post("/listings/")
 async def create_listing(
@@ -111,7 +108,7 @@ async def create_listing(
 
             connection.commit()
 
-            return {"message": "Listing created successfully with images"}
+            return {"message": "Listing created successfully"}
     
     except Exception as e:
         connection.rollback()
@@ -136,6 +133,11 @@ async def edit_listing(
 
     try:
         with connection.cursor() as cursor:
+            
+            print(images)
+            
+            if listing_id is None:
+                return HTTPException(status_code=404, detail="Listing ID is missing")
             
             if animal_age <= 0 or (animal_price is not None and animal_price <= 0):
                 return HTTPException(status_code=400, detail="Price and age must be greater than 0")
@@ -165,7 +167,7 @@ async def edit_listing(
 
             connection.commit()
 
-            return {"message": "Listing updated successfully with images"}
+            return {"message": "Listing updated successfully"}
     
     except Exception as e:
         connection.rollback()
@@ -210,7 +212,7 @@ async def delete_listing(listing_id: UUID):
 
     try:
         with connection.cursor() as cursor:
-        
+
             check_listing_query = "SELECT * FROM listings WHERE id = %s"
             cursor.execute(check_listing_query, (str(listing_id),))
             existing_listing = cursor.fetchone()
@@ -266,7 +268,6 @@ async def get_listings_by_filter(
 
                     cursor.execute(query, params)
                     rows = cursor.fetchall()
-
                     for row in rows:
                         listings.append(process_row(row, cursor))
             else:
@@ -286,7 +287,6 @@ async def get_listings_by_filter(
 
                 cursor.execute(query, params)
                 rows = cursor.fetchall()
-
                 for row in rows:
                     listings.append(process_row(row, cursor))
 
@@ -305,9 +305,7 @@ async def get_user_listings(
     global connection
     try:
         with connection.cursor() as cursor:
-            if user_email is None:
-                return HTTPException(status_code=404, detail="User email is missing")
-            
+        
             query = """ SELECT id, owner_email, animal_type, animal_breed, animal_age, animal_name, 
                                 location, listing_type, animal_price, description
                                     FROM listings 
@@ -337,11 +335,13 @@ async def get_listing_by_id(listing_id: UUID):
     global connection
     try:
         with connection.cursor() as cursor:
+
             query = """ SELECT id, owner_email, animal_type, animal_breed, animal_age, animal_name, 
                                 location, listing_type, animal_price, description FROM listings WHERE id = %s
             """
             cursor.execute(query, (str(listing_id),))
             row = cursor.fetchone()
+
             if row:
                 listing_id = row[0]
                 images = get_images_for_listing(listing_id, cursor)
@@ -367,41 +367,42 @@ async def get_listing_by_id(listing_id: UUID):
 
 def create_tables():
     try:
-        global connection,cursor
+        global connection
 
-        # Create the 'listings' 
-        create_listings_table = """
-            CREATE TABLE IF NOT EXISTS listings (
-                id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-                owner_email VARCHAR NOT NULL,
-                animal_type VARCHAR NOT NULL,
-                animal_breed VARCHAR NOT NULL,
-                animal_age INT NOT NULL,
-                animal_name VARCHAR NOT NULL,
-                location VARCHAR NOT NULL,
-                listing_type VARCHAR(10) CHECK (listing_type IN ('SALE', 'ADOPTION')) NOT NULL,
-                animal_price DOUBLE PRECISION,
-                listing_status VARCHAR(10) CHECK (listing_status IN ('ACCEPTED', 'PENDING')) NOT NULL,
-                description TEXT
-            );
-        """
+        with connection.cursor() as cursor:
+            # Create the 'listings' 
+            create_listings_table = """
+                CREATE TABLE IF NOT EXISTS listings (
+                    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+                    owner_email VARCHAR NOT NULL,
+                    animal_type VARCHAR NOT NULL,
+                    animal_breed VARCHAR NOT NULL,
+                    animal_age INT NOT NULL,
+                    animal_name VARCHAR NOT NULL,
+                    location VARCHAR NOT NULL,
+                    listing_type VARCHAR(10) CHECK (listing_type IN ('SALE', 'ADOPTION')) NOT NULL,
+                    animal_price DOUBLE PRECISION,
+                    listing_status VARCHAR(10) CHECK (listing_status IN ('ACCEPTED', 'PENDING')) NOT NULL,
+                    description TEXT
+                );
+            """
 
-        cursor = connection.cursor()
-        cursor.execute(create_listings_table)
+            cursor = connection.cursor()
+            cursor.execute(create_listings_table)
 
-        # Create the 'images' table with a foreign key reference to listings
-        create_images_table = """
-            CREATE TABLE IF NOT EXISTS images (
-                id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-                image_name TEXT NOT NULL,
-                image_url TEXT NOT NULL,
-                listing_id UUID REFERENCES listings(id) ON DELETE CASCADE
-            );
-        """
-        cursor.execute(create_images_table)
+            # Create the 'images' table with a foreign key reference to listings
+            create_images_table = """
+                CREATE TABLE IF NOT EXISTS images (
+                    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+                    image_name TEXT NOT NULL,
+                    image_url TEXT NOT NULL,
+                    listing_id UUID REFERENCES listings(id) ON DELETE CASCADE
+                );
+            """
+            cursor.execute(create_images_table)
 
-        connection.commit()
-        logger.info("Tables created successfully in PostgreSQL database")
+            connection.commit()
+            logger.info("Tables created successfully in PostgreSQL database")
     except (Exception, psycopg2.DatabaseError) as error:
         logger.error(f"Error creating tables: {error}")
 
@@ -441,7 +442,7 @@ def update_listing(cursor, listing_id, owner_email, animal_type, animal_breed, a
 def get_images_for_listing(listing_id, cursor):
     cursor.execute("SELECT image_url FROM images WHERE listing_id = %s", (listing_id,))
     image_rows = cursor.fetchall()
-    images = [image[0] for image in image_rows]
+    images = [image[0] for image in image_rows] if image_rows else []
     return images
 
 def process_row(row, cursor):
@@ -449,6 +450,7 @@ def process_row(row, cursor):
         animal_name, location, listing_type, animal_price, description = row
 
     images = get_images_for_listing(listing_id, cursor)
+
     listing = {
         "listing_id": listing_id,
         "owner_email": owner_email,
